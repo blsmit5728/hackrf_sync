@@ -292,6 +292,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmd_preview.setStyleSheet("QLabel{font-family:monospace}")
         return self.cmd_preview
 
+
+    def _on_marker_moved(self):
+        """While dragging: update the readout to the nearest FFT bin."""
+        if getattr(self, "last_freqs", None) is None or getattr(self, "last_powers", None) is None:
+            return
+        x = float(self.marker.value())  # current x of vertical InfiniteLine
+        # Find nearest bin
+        idx = int(np.clip(np.searchsorted(self.last_freqs, x), 1, self.last_freqs.size-1))
+        # Choose closer of idx-1 vs idx
+        if abs(self.last_freqs[idx] - x) >= abs(self.last_freqs[idx-1] - x):
+            idx = idx - 1
+        fx = float(self.last_freqs[idx])
+        py = float(self.last_powers[idx])
+        # Update label at the marker
+        self.marker_label.setText(f"{fx/1e6:.3f} MHz\n{py:.1f} dBFS")
+        self.marker_label.setPos(fx, py)
+
+    def _on_marker_released(self):
+        """When drag ends: snap the marker to the exact nearest bin center."""
+        if getattr(self, "last_freqs", None) is None:
+            return
+        x = float(self.marker.value())
+        idx = int(np.clip(np.searchsorted(self.last_freqs, x), 1, self.last_freqs.size-1))
+        if abs(self.last_freqs[idx] - x) >= abs(self.last_freqs[idx-1] - x):
+            idx = idx - 1
+        self.marker.setPos(float(self.last_freqs[idx]))
+        # Also refresh the readout to ensure it matches the snapped bin
+        self._on_marker_moved()
+
+
     def _build_plots(self):
         w = pg.GraphicsLayoutWidget()
         # Set background color (e.g., dark gray)
@@ -306,6 +336,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.curve = self.plot_spectrum.plot(pen=pg.mkPen(width=1))
         # Set a color for the spectrum curve (e.g., blue)
         self.curve.setPen(pg.mkPen(color='g', width=1))
+
+        # --- Draggable marker + readout ---
+        self.marker = pg.InfiniteLine(angle=90, movable=True, pen=pg.mkPen('y', width=2))
+        self.plot_spectrum.addItem(self.marker)
+
+        self.marker_label = pg.TextItem(color='y', anchor=(0, 1))
+        self.plot_spectrum.addItem(self.marker_label)
+
+        # Move/update handlers
+        self.marker.sigPositionChanged.connect(self._on_marker_moved)
+        self.marker.sigPositionChangeFinished.connect(self._on_marker_released)
+
         
 
         # Waterfall (bottom)
@@ -484,6 +526,22 @@ class MainWindow(QtWidgets.QMainWindow):
         dt = time.time() - self.t0
         rate = self.sweeps_count / dt if dt > 0 else 0.0
         self.status.setText(f"Sweeps: {self.sweeps_count}  |  Rate: {rate:.2f} sweeps/s  |  Bins: {self.col_bins}")
+
+        # Keep a copy of the latest sweep for marker readout
+        self.last_freqs = self.freq_axis.copy() if self.freq_axis is not None else None
+        self.last_powers = powers.copy()
+
+        # Initialize/refresh marker bounds & default position
+        if self.last_freqs is not None and self.last_freqs.size > 1:
+            f0 = float(self.last_freqs[0]); f1 = float(self.last_freqs[-1])
+            try:
+                self.marker.setBounds([f0, f1])
+            except Exception:
+                pass
+            # If the marker hasn't been placed yet, drop it in the middle
+            if not hasattr(self, "_marker_initialized") or not self._marker_initialized:
+                self.marker.setPos(0.5 * (f0 + f1))
+                self._marker_initialized = True
 
         # Reset row cache
         self.row_freqs = []
