@@ -74,6 +74,7 @@ class SweepReader(QtCore.QThread):
 
             full_output = []
             full_samples = 0
+            samps_rxd = 0
 
             for raw in self._proc.stdout:
                 if self._stop.is_set():
@@ -84,43 +85,47 @@ class SweepReader(QtCore.QThread):
                 if self._log_fp:
                     self._log_fp.write(line + "\n")
 
-                parsed = self._parse_line(line)
-                start = parsed.get('start_hz')
-                end = parsed.get('end_hz')
-                powers = parsed.get('powers', [])
-                print(start, end, self.start_hz, self.stop_hz)
-                if parsed.get('start_hz') == self.start_hz:
+                ret_data = self._parse_line(line)
+                start = ret_data[0]
+                end = ret_data[1]
+                bin_hz = ret_data[2]
+                nsamp = ret_data[3]
+                powers = ret_data[4]
+                if start == self.start_hz:
                     # This is the first segment of a new sweep, reset full_output
                     full_output = []
                     for i in powers:
                         full_output.append(i)
-                    full_samples += parsed.get('nsamp', 0)
-                elif parsed.get('end_hz') == self.stop_hz:
+                    full_samples += nsamp
+                    #print(len(powers), "powers in first segment")
+                elif end == self.stop_hz:
                     # This is the last segment of a sweep, finalize it
                     if full_output:
                         # Combine all segments into a single dict
                         # print(full_output)
                         for i in powers:
                             full_output.append(i)
+                        #print(len(powers), "powers in last segment")
+                        full_samples += nsamp
                         combined = {
                             'start_hz': self.start_hz,
                             'end_hz': self.stop_hz,
-                            'bin_hz': parsed['bin_hz'],
+                            'bin_hz': bin_hz,
                             'nsamp': full_samples,
                             'powers': full_output, # np.concatenate(full_output).tolist(),
                         }
+                        print("Emitting segment: start = {} end = {} nsamp = {} {}".format(
+                            combined['start_hz'], combined['end_hz'], combined['nsamp'], len(combined['powers'])))
                         self.segment.emit(combined)
                         full_output = []
+                        full_samples = 0
                 else:
                     for i in powers:
                         # Append to the full output for this sweep
                         full_output.append(i)
+                    full_samples += nsamp
+                    #print(len(powers), "powers in mid segment")
                     #full_output.append( X for X in parsed.get('powers', []) )
-                    
-
-                full_output.append(parsed)
-                if parsed is not None:
-                    self.segment.emit(parsed)
 
             # Drain remaining output briefly (optional)
             if self._proc and self._proc.poll() is None:
@@ -176,15 +181,10 @@ class SweepReader(QtCore.QThread):
             nsamp    = float(parts[5])
             # Remaining are powers in dBFS
             powers = [float(x) for x in parts[6:] if x]
+            nsamp = len(powers)  # Update nsamp to actual count of powers
             if len(powers) == 0:
                 return None
-            return {
-                'start_hz': start_hz,
-                'end_hz': end_hz,
-                'bin_hz': bin_hz,
-                'nsamp': nsamp,
-                'powers': powers,
-            }
+            return start_hz,end_hz,bin_hz,nsamp,powers
         except Exception as e:
             print("Exception parsing line:", line, "Error:", e)
             return None
@@ -240,6 +240,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Device and extras
         self.dev_index = QtWidgets.QSpinBox(); self.dev_index.setRange(0, 7); self.dev_index.setValue(0)
         self.invert_fft = QtWidgets.QCheckBox("Invert FFT order (-I)")
+        self.bias_t = QtWidgets.QCheckBox("Enable bias tee (-b)"); self.bias_t.setChecked(True)  # Default enabled
         self.log_checkbox = QtWidgets.QCheckBox("Log CSV to file…")
         self.log_path = QtWidgets.QLineEdit(); self.log_path.setPlaceholderText("Optional: /path/to/log.csv"); self.log_path.setEnabled(False)
         self.log_checkbox.toggled.connect(self.log_path.setEnabled)
@@ -264,6 +265,7 @@ class MainWindow(QtWidgets.QMainWindow):
         r += 1
         g.addWidget(QtWidgets.QLabel("Device index (-d)"), r, 0); g.addWidget(self.dev_index, r, 1)
         g.addWidget(self.invert_fft, r, 2, 1, 2)
+        g.addWidget(self.bias_t, r, 3)
         r += 1
         g.addWidget(self.log_checkbox, r, 0, 1, 1); g.addWidget(self.log_path, r, 1, 1, 3)
         r += 1
@@ -273,7 +275,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Change handlers to keep command preview fresh
         for w in (self.start_freq, self.stop_freq, self.bin_width, self.nsamp,
-                  self.lna_gain, self.vga_gain, self.dev_index, self.invert_fft,
+                  self.lna_gain, self.vga_gain, self.dev_index, self.invert_fft,self.bias_t,
                   self.log_checkbox, self.log_path):
             if isinstance(w, (QtWidgets.QSpinBox, QtWidgets.QDoubleSpinBox)):
                 w.valueChanged.connect(self._update_command_preview)
@@ -292,13 +294,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_plots(self):
         w = pg.GraphicsLayoutWidget()
+        # Set background color (e.g., dark gray)
+        pg.setConfigOption('background', "#063E77")  # or any valid color string
 
         # Spectrum (top)
         self.plot_spectrum = w.addPlot(row=0, col=0)
         self.plot_spectrum.showGrid(x=True, y=True)
+        self.plot_spectrum.setYRange(-100, 0)  # dBFS range
         self.plot_spectrum.setLabel('left', 'Power', units='dBFS')
         self.plot_spectrum.setLabel('bottom', 'Frequency', units='Hz')
         self.curve = self.plot_spectrum.plot(pen=pg.mkPen(width=1))
+        # Set a color for the spectrum curve (e.g., blue)
+        self.curve.setPen(pg.mkPen(color='g', width=1))
+        
 
         # Waterfall (bottom)
         self.img = pg.ImageItem()
@@ -332,6 +340,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lna     = int(self.lna_gain.value())
         vga     = int(self.vga_gain.value())
         dev     = int(self.dev_index.value())
+        biast   = self.bias_t.isChecked()
 
         cmd = ["hackrf_sweep",
                "-f", f"{f_start}:{f_stop}",
@@ -339,6 +348,8 @@ class MainWindow(QtWidgets.QMainWindow):
                "-n", str(nsamp),
                "-l", str(lna),
                "-g", str(vga),]
+        if biast:
+            cmd.append("-p 1")
                #"-d", str(dev)]
         if self.invert_fft.isChecked():
             cmd.append("-I")
@@ -402,33 +413,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_sweep()
 
     def on_segment(self, seg: dict):
-        start_hz = seg['start_hz']; bin_hz = seg['bin_hz']
-        print(seg.get('powers', []))
-        powers = np.array(seg['powers'], dtype=float)
-        # Detect new sweep when the segment start decreases
-        if self.last_seg_start is not None and start_hz < self.last_seg_start:
-            # Finalize previous sweep row
-            self._finalize_row()
-        self.last_seg_start = start_hz
+        start_hz = seg['start_hz']
+        bin_hz = seg['bin_hz']
+        end_hz = seg['end_hz']  # Not used, but could be useful for debugging
 
-        # Append to an in-progress row cache
-        if not hasattr(self, 'row_freqs'):
-            self.row_freqs = []
-            self.row_powers = []
-        # Compute per-bin frequencies for this segment
+        print(f"Received segment: start={start_hz} Hz, end={end_hz} Hz, bin={bin_hz} Hz, nsamp={seg['nsamp']}")
+        powers = np.array(seg['powers'], dtype=float)
         freqs = start_hz + bin_hz * np.arange(powers.size)
-        self.row_freqs.append(freqs)
-        self.row_powers.append(powers)
+        self.row_powers = powers
+        self.row_freqs = freqs
+        self._finalize_row()
+        # Detect new sweep when the segment start decreases
+        # if self.last_seg_start is not None and start_hz < self.last_seg_start:
+        #     # Finalize previous sweep row
+        #     self._finalize_row()
+        # self.last_seg_start = start_hz
+
+        # # Append to an in-progress row cache
+        # if not hasattr(self, 'row_freqs'):
+        #     self.row_freqs = []
+        #     self.row_powers = []
+        # # Compute per-bin frequencies for this segment
+        # freqs = start_hz + bin_hz * np.arange(powers.size)
+        # self.row_freqs.append(freqs)
+        # self.row_powers.append(powers)
 
     def _finalize_row(self):
         if not hasattr(self, 'row_freqs') or len(self.row_freqs) == 0:
             return
-        freqs = np.concatenate(self.row_freqs)
-        powers = np.concatenate(self.row_powers)
-        # Sort by frequency just in case segments arrived out of order
-        order = np.argsort(freqs)
-        freqs = freqs[order]
-        powers = powers[order]
+        # freqs = np.concatenate(self.row_freqs)
+        # powers = np.concatenate(self.row_powers)
+        # # Sort by frequency just in case segments arrived out of order
+        # order = np.argsort(freqs)
+        # freqs = freqs[order]
+        # powers = powers[order]
+        powers = self.row_powers
+        freqs = self.row_freqs
 
         # Initialize axes/columns on first row
         if self.col_bins is None:
