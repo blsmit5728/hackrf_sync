@@ -351,16 +351,16 @@ class MainWindow(QtWidgets.QMainWindow):
         
 
         # Waterfall (bottom)
-        self.img = pg.ImageItem()
-        self.view_waterfall = w.addViewBox(row=1, col=0)
-        self.view_waterfall.addItem(self.img)
-        self.view_waterfall.setMouseEnabled(x=True, y=False)
-        self.view_waterfall.setAspectLocked(False)
+        #self.img = pg.ImageItem()
+        #self.view_waterfall = w.addViewBox(row=1, col=0)
+        #self.view_waterfall.addItem(self.img)
+        #self.view_waterfall.setMouseEnabled(x=True, y=False)
+        #self.view_waterfall.setAspectLocked(False)
 
         # Color LUT (grayscale by default). User can tweak levels in UI if desired.
-        lut = np.repeat(np.arange(256, dtype=np.ubyte)[:, None], 3, axis=1)
-        self.img.setLookupTable(lut)
-        self.img.setLevels((-100, 0))
+        #lut = np.repeat(np.arange(256, dtype=np.ubyte)[:, None], 3, axis=1)
+        #self.img.setLookupTable(lut)
+        #self.img.setLevels((-100, 0))
 
         return w
 
@@ -415,7 +415,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.freq_axis = None
         self.last_seg_start = None
         self.curve.setData([], [])
-        self.img.clear()
+        #self.img.clear()
         self.sweeps_count = 0
         self.t0 = time.time()
 
@@ -507,19 +507,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.curve.setData(self.freq_axis, powers)
 
         # Push into waterfall buffer
-        self.rows.append(powers)
-        img_arr = np.vstack(self.rows)  # shape: (rows, cols)
+        #self.rows.append(powers)
+        #img_arr = np.vstack(self.rows)  # shape: (rows, cols)
         # Display newest at bottom; pg.ImageItem expects row-major top-to-bottom
         # We'll simply show it as-is and stretch X to frequency span
-        self.img.setImage(img_arr, autoLevels=False)
+        #self.img.setImage(img_arr, autoLevels=False)
         # Map X axis to frequency range, Y to number of rows
-        if self.freq_axis is not None and self.freq_axis.size > 1:
-            f0 = float(self.freq_axis[0]); f1 = float(self.freq_axis[-1])
-            rows = img_arr.shape[0]
-            self.img.resetTransform()
-            self.img.setRect(QtCore.QRectF(f0, 0, f1 - f0, rows))
-            self.view_waterfall.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
-            self.view_waterfall.setYRange(0, rows)
+        #if self.freq_axis is not None and self.freq_axis.size > 1:
+        #    f0 = float(self.freq_axis[0]); f1 = float(self.freq_axis[-1])
+        #    rows = img_arr.shape[0]
+        #    self.img.resetTransform()
+        #    self.img.setRect(QtCore.QRectF(f0, 0, f1 - f0, rows))
+            #self.view_waterfall.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
+            #self.view_waterfall.setYRange(0, rows)
 
         # Stats
         self.sweeps_count += 1
