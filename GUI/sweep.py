@@ -308,17 +308,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.curve.setPen(pg.mkPen(color='g', width=1))
         
 
-        # Waterfall (bottom)
-        self.img = pg.ImageItem()
-        self.view_waterfall = w.addViewBox(row=1, col=0)
-        self.view_waterfall.addItem(self.img)
-        self.view_waterfall.setMouseEnabled(x=True, y=False)
-        self.view_waterfall.setAspectLocked(False)
+        # # Waterfall (bottom)
+        # self.img = pg.ImageItem()
+        # self.view_waterfall = w.addViewBox(row=1, col=0)
+        # self.view_waterfall.addItem(self.img)
+        # self.view_waterfall.setMouseEnabled(x=True, y=False)
+        # self.view_waterfall.setAspectLocked(False)
 
         # Color LUT (grayscale by default). User can tweak levels in UI if desired.
-        lut = np.repeat(np.arange(256, dtype=np.ubyte)[:, None], 3, axis=1)
-        self.img.setLookupTable(lut)
-        self.img.setLevels((-100, 0))
+        #lut = np.repeat(np.arange(256, dtype=np.ubyte)[:, None], 3, axis=1)
+        #self.img.setLookupTable(lut)
+        #self.img.setLevels((-100, 0))
 
         return w
 
@@ -373,7 +373,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.freq_axis = None
         self.last_seg_start = None
         self.curve.setData([], [])
-        self.img.clear()
+        # self.img.clear()
         self.sweeps_count = 0
         self.t0 = time.time()
 
@@ -463,21 +463,42 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Update spectrum trace (last complete sweep)
         self.curve.setData(self.freq_axis, powers)
+        # get some peaks and mark them.
+        # find some peaks.
+        if self.plot_spectrum is not None:
+            # only peaks > -40 dBFS
+            powers = np.array(powers)
+            mask = powers > -40
+            # peaks = np.argwhere((powers[1:-1] > powers[:-2]) & (powers[1:-1] > powers[2:])) + 1
+            peaks = np.argwhere((powers[1:-1] > powers[:-2]) & (powers[1:-1] > powers[2:]) & mask[1:-1]) + 1
+            peaks = peaks.flatten()
+            print(f"Found {len(peaks)} peaks")
+            # clear old peaks.
+            for item in self.plot_spectrum.allChildItems():
+                if isinstance(item, pg.ScatterPlotItem):
+                    self.plot_spectrum.removeItem(item)
+            if len(peaks) > 0:
+                peak_vals = powers[peaks].flatten()
+                peak_freqs = self.freq_axis[peaks].flatten()
+                spots = [{'pos': (f, p), 'data': 1} for f, p in zip(peak_freqs, peak_vals)]
+                scatter = pg.ScatterPlotItem(size=10, pen=pg.mkPen(None), brush=pg.mkBrush(255, 0, 0, 120))
+                scatter.addPoints(spots)
+                self.plot_spectrum.addItem(scatter)
 
         # Push into waterfall buffer
-        self.rows.append(powers)
-        img_arr = np.vstack(self.rows)  # shape: (rows, cols)
+        #self.rows.append(powers)
+        #img_arr = np.vstack(self.rows)  # shape: (rows, cols)
         # Display newest at bottom; pg.ImageItem expects row-major top-to-bottom
         # We'll simply show it as-is and stretch X to frequency span
-        self.img.setImage(img_arr, autoLevels=False)
+        # self.img.setImage(img_arr, autoLevels=False)
         # Map X axis to frequency range, Y to number of rows
-        if self.freq_axis is not None and self.freq_axis.size > 1:
-            f0 = float(self.freq_axis[0]); f1 = float(self.freq_axis[-1])
-            rows = img_arr.shape[0]
-            self.img.resetTransform()
-            self.img.setRect(QtCore.QRectF(f0, 0, f1 - f0, rows))
-            self.view_waterfall.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
-            self.view_waterfall.setYRange(0, rows)
+        #if self.freq_axis is not None and self.freq_axis.size > 1:
+            #f0 = float(self.freq_axis[0]); f1 = float(self.freq_axis[-1])
+            #rows = img_arr.shape[0]
+            #self.img.resetTransform()
+            #self.img.setRect(QtCore.QRectF(f0, 0, f1 - f0, rows))
+            #self.view_waterfall.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
+            #self.view_waterfall.setYRange(0, rows)
 
         # Stats
         self.sweeps_count += 1
